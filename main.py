@@ -16,6 +16,7 @@ warnings.filterwarnings("ignore")
 
 
 URL = os.environ.get("FAQ_BOT_SERVER_API", "http://localhost:8002")
+SECRET_KEY = os.environ.get("SECRET_KEY", "123")
 runner = RemoteRunnable(url=URL)
 callback_handler = utils.StreamlitUICallbackHandler()
 
@@ -42,45 +43,54 @@ async def run_model(inp: dict, config: dict = {}):
     logger.info("config %s", config["configurable"])
 
     # async for event in runner.astream_events(input=inp, config=config, version="v1"):
+    headers = {"SECRETKEY": SECRET_KEY}
     response = requests.post(
-        URL + "/chat/stream_events", json={"input": inp, "config": config}, stream=True
+        URL + "/chat/stream_events",
+        json={"input": inp, "config": config},
+        stream=True,
+        headers=headers,
     )
     logger.info("post response %s", response)
-    chunks = []
-    semi_chunk = b""
-    for chunk in response.iter_lines(
-        chunk_size=1024, delimiter="\r\n\r\n", decode_unicode=True
-    ):
-        if chunk:
-            # logger.info("-------")
-            c_str: str = chunk
-            # logger.info("\t %s", c_str)
-            if c_str.startswith("event: end"):
-                # Ignore
-                pass
-            elif c_str.startswith("event: "):
-                # Set starting string
-                semi_chunk = chunk
-            else:
-                # Add to existing string
-                semi_chunk += chunk
-            try:
-                semi_chunk_processed = (
-                    "{"
-                    + semi_chunk.replace(
-                        "event: data\r\ndata:", '"event": "data",\r\n"data":'
+    if response.status_code != 200:
+        yield {"event": "error", "data": response.text}
+    else:
+        chunks = []
+        semi_chunk = b""
+        for chunk in response.iter_lines(
+            chunk_size=1024, delimiter="\r\n\r\n", decode_unicode=True
+        ):
+            if chunk:
+                # logger.info("-------")
+                c_str: str = chunk
+                # logger.info("\t %s", c_str)
+                if c_str.startswith("event: end"):
+                    # Ignore
+                    pass
+                elif c_str.startswith("event: "):
+                    # Set starting string
+                    semi_chunk = chunk
+                else:
+                    # Add to existing string
+                    semi_chunk += chunk
+                try:
+                    semi_chunk_processed = (
+                        "{"
+                        + semi_chunk.replace(
+                            "event: data\r\ndata:", '"event": "data",\r\n"data":'
+                        )
+                        .replace("event: end", '"event": "end"')
+                        .replace("event: error\r\n", '"event": "error",\r\n')
+                        + "}"
                     )
-                    .replace("event: end", '"event": "end"')
-                    .replace("event: error\r\n", '"event": "error",\r\n')
-                    + "}"
-                )
-                event_json = json.loads(semi_chunk_processed)
-                # Only append if decoded properly
-                chunks.append(event_json)
+                    event_json = json.loads(semi_chunk_processed)
+                    # Only append if decoded properly
+                    chunks.append(event_json)
 
-                yield event_json
-            except json.JSONDecodeError as e:
-                logger.error("Error: could not decode semi_chunk %s %s", semi_chunk, e)
+                    yield event_json
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        "Error: could not decode semi_chunk %s %s", semi_chunk, e
+                    )
 
 
 async def main():
@@ -186,10 +196,13 @@ async def main():
         chat_history = [el.model_dump() for el in st.session_state["chat_history"][:-1]]
         inp = {"query": latest_msg.content, "chat_history": chat_history}
         results = []
-        tool_expander = None
         async for event in run_model(inp=inp, config=config):
             results.append(event)
             data = event.get("data", {})
+            if event["event"] == "error":
+                logger.error("Error %s", data)
+                callback_handler.on_llm_new_token(token=data, run_id=None)
+                break
             kind = data.get("event")
             if kind == "on_chat_model_stream":
                 token = data["data"]["chunk"]["content"]
@@ -237,8 +250,8 @@ async def main():
         # Append final message
         final_message = "".join(callback_handler.token_buffer)
         append_message(utils.Message(content=final_message, type="ai"))
-    # Reset handler
-    callback_handler.on_llm_end(response=final_message, run_id=None)
+        # Reset handler
+        callback_handler.on_llm_end(response=final_message, run_id=None)
     # Reset prompt availability
     st.session_state["prompt_disabled"] = False
 
