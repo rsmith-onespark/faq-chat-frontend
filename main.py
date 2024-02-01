@@ -14,7 +14,6 @@ from logger import logger
 
 warnings.filterwarnings("ignore")
 
-
 URL = os.environ.get("FAQ_BOT_SERVER_API", "http://localhost:8002")
 SECRET_KEY = os.environ.get("SECRET_KEY", "123")
 runner = RemoteRunnable(url=URL)
@@ -110,17 +109,17 @@ async def main():
     # Model parameters
     model_options = {
         "gpt-4-0125-preview": "GPT-4-turbo",
-        "gpt-4": "GPT-4",
+        # "gpt-4": "GPT-4",
         "gpt-3.5-turbo": "GPT-3.5-turbo",
     }
     model = st.sidebar.selectbox(
         "Model name",
         options=list(model_options.keys()),
         format_func=lambda x: model_options[x],
-        index=2,
+        index=0,
     )
     temperature = st.sidebar.slider(
-        "Model temperature (0-1)",
+        "Model's randomness (Default = 0 i.e. same output given the same input)",
         min_value=0,
         max_value=1,
         value=0,

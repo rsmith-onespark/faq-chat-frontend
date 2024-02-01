@@ -92,7 +92,7 @@ def display_message(message: Message):
     else:
         if message.tool.output is not None:
             expander = st.expander(
-                "Tool `{message.tool.name}` finished", expanded=False
+                f"Tool `{message.tool.name}` finished", expanded=False
             )
             display_tool_output(expander=expander, tool_output_py=message.tool.output)
         else:
