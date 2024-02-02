@@ -120,9 +120,10 @@ async def main():
     )
     temperature = st.sidebar.slider(
         "Model's randomness (Default = 0 i.e. same output given the same input)",
-        min_value=0,
-        max_value=1,
-        value=0,
+        min_value=0.0,
+        max_value=1.0,
+        step=0.1,
+        value=0.0,
     )
     st.session_state["model"] = model
     st.session_state["temperature"] = temperature
