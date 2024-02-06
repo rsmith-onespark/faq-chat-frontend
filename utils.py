@@ -6,6 +6,7 @@ from typing import Dict, List, Literal, Any, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, model_validator
 from logger import logger
+import json
 
 
 class Tool(BaseModel):
@@ -108,12 +109,25 @@ def display_tool_input(expander, tool_input):
 
 
 def display_tool_output(expander, tool_output_py):
-    expander.write("Output: ...")
-    # Display message
     if isinstance(tool_output_py, list):
         for out in tool_output_py:
             if isinstance(out, dict):
-                expander.json(out)
+                # Set key for checkbox_disabled_dict
+                checkbox_key = out.get("id", json.dumps(out))
+                if checkbox_key not in st.session_state.checkbox_disabled_dict:
+                    # Store checkbox in session state to enable disabled toggling
+                    ## Initialise as disabled
+                    st.session_state.checkbox_disabled_dict[checkbox_key] = True
+                _disabled = st.session_state.checkbox_disabled_dict[checkbox_key]
+                src = out["source"]
+                if "page_number" in out:
+                    src += f' (Page {out["page_number"]})'
+                checkbox = expander.checkbox(
+                    f"{out['id']}: {src} - {out['full_section']}",
+                    disabled=_disabled,
+                )
+                if checkbox:
+                    expander.json(out)
             else:
                 expander.write(out)
     else:
