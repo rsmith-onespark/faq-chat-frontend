@@ -161,9 +161,6 @@ async def main():
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"]: List[utils.Message] = INITIAL_MESSAGE
 
-    if "checkbox_disabled_dict" not in st.session_state:
-        st.session_state["checkbox_disabled_dict"]: Dict = {}
-
     if "model" not in st.session_state:
         st.session_state["model"] = model
 
@@ -255,11 +252,6 @@ async def main():
         append_message(utils.Message(content=final_message, type="ai"))
         # Reset handler
         callback_handler.on_llm_end(response=final_message, run_id=None)
-        # Set disabled to False for buttons
-        for k in st.session_state.checkbox_disabled_dict:
-            st.session_state.checkbox_disabled_dict[k] = False
-        ## Have to re-run for checkboxes to update
-        st.rerun()
 
     # Reset prompt availability
     st.session_state["prompt_disabled"] = False

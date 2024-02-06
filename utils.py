@@ -4,6 +4,7 @@ from uuid import UUID
 import streamlit as st
 from typing import Dict, List, Literal, Any, Optional
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.documents import Document
 from pydantic import BaseModel, model_validator
 from logger import logger
 import json
@@ -108,26 +109,25 @@ def display_tool_input(expander, tool_input):
     expander.write(f"Tool input: `{tool_input}`")
 
 
+def format_tool_out_to_document(out: dict, idx: int) -> Document:
+    # It's a langchain document
+    out = Document.parse_obj(out)
+    return out
+
+
 def display_tool_output(expander, tool_output_py):
     if isinstance(tool_output_py, list):
-        for out in tool_output_py:
+        for idx, out in enumerate(tool_output_py):
             if isinstance(out, dict):
-                # Set key for checkbox_disabled_dict
-                checkbox_key = out.get("id", json.dumps(out))
-                if checkbox_key not in st.session_state.checkbox_disabled_dict:
-                    # Store checkbox in session state to enable disabled toggling
-                    ## Initialise as disabled
-                    st.session_state.checkbox_disabled_dict[checkbox_key] = True
-                _disabled = st.session_state.checkbox_disabled_dict[checkbox_key]
-                src = out["source"]
+                # Start index at 1
+                out = format_tool_out_to_document(out, idx=idx + 1)
+                src = out.metadata["source"]
                 if "page_number" in out:
-                    src += f' (Page {out["page_number"]})'
-                checkbox = expander.checkbox(
-                    f"{out['id']}: {src} - {out['full_section']}",
-                    disabled=_disabled,
+                    src += f' (Page {out.metadata["page_number"]})'
+                expander.markdown(
+                    f"**{out.metadata['id']}: {src} - {out.metadata['full_section']}**"
                 )
-                if checkbox:
-                    expander.json(out)
+                expander.json(out.dict(), expanded=False)
             else:
                 expander.write(out)
     else:
