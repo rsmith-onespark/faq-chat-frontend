@@ -5,9 +5,11 @@ import streamlit as st
 from typing import Dict, List, Literal, Any, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, model_validator
 from logger import logger
 import json
+import ast
 
 
 class Tool(BaseModel):
@@ -16,16 +18,8 @@ class Tool(BaseModel):
     output: Any | None = None
 
 
-class Message(BaseModel):
-    content: str
-    type: Literal["ai", "human"] = "ai"
-    tool: Tool | None = None
-
-    @model_validator(mode="after")
-    def validate_is_tool(self):
-        if self.tool is not None and self.type != "ai":
-            raise ValueError("invalid is_tool")
-        return self
+class Message(BaseMessage):
+    pass
 
 
 def format_message(text):
@@ -50,7 +44,7 @@ def get_message_html(message: Message):
     """
     This function is used to get the HTML for a message in the chatbot UI.
     """
-    if message.type == "human":
+    if message.type in ["human", "user"]:
         avatar_url = "https://avataaars.io/?avatarStyle=Transparent&topType=ShortHairShortFlat&accessoriesType=Prescription01&hairColor=Auburn&facialHairType=BeardLight&facialHairColor=Black&clotheType=Hoodie&clotheColor=PastelBlue&eyeType=Squint&eyebrowType=DefaultNatural&mouthType=Smile&skinColor=Tanned"
         message_alignment = "flex-end"
         message_bg_color = "linear-gradient(135deg, #00B2FF 0%, #006AFF 100%)"
@@ -81,27 +75,35 @@ def get_message_html(message: Message):
 
 def display_message(message: Message):
     """Helper function for streamlit"""
-    tool_log = "" if message.tool is None else f"tool={message.tool.name}"
-    logger.info(
-        '\t displaying message %s: "%s" (%s)',
-        message.type,
-        message.content,
-        tool_log,
-    )
-    if message.tool is None:
+    tool_log = ""
+    if message.type == "tool":
+        tool_log = f"(tool={message.additional_kwargs['name']})"
+    # logger.info(
+    #     '\t displaying message %s: "%s" %s',
+    #     message.type,
+    #     (
+    #         str(message.content)[:500] + "..."
+    #         if len(str(message.content)) > 500
+    #         else str(message.content)
+    #     ),
+    #     tool_log,
+    # )
+    if message.type == "tool":
+        expander = st.expander(
+            f"Tool `{message.additional_kwargs['name']}` finished", expanded=False
+        )
+        display_tool_output(expander=expander, tool_output_py=message.content)
+    elif message.type == "ai" and "tool_calls" in message.additional_kwargs:
+        for tc in message.additional_kwargs["tool_calls"]:
+            expander = st.expander(
+                f"Running tool `{tc['function']['name']}`", expanded=False
+            )
+            display_tool_input(
+                expander=expander, tool_input=tc["function"]["arguments"]
+            )
+    else:
         formatted = get_message_html(message)
         st.write(formatted, unsafe_allow_html=True)
-    else:
-        if message.tool.output is not None:
-            expander = st.expander(
-                f"Tool `{message.tool.name}` finished", expanded=False
-            )
-            display_tool_output(expander=expander, tool_output_py=message.tool.output)
-        else:
-            expander = st.expander(
-                f"Running tool `{message.tool.name}`", expanded=False
-            )
-            display_tool_input(expander=expander, tool_input=message.tool.arguments)
     return
 
 
@@ -111,11 +113,25 @@ def display_tool_input(expander, tool_input):
 
 def format_tool_out_to_document(out: dict, idx: int) -> Document:
     # It's a langchain document
-    out = Document.parse_obj(out)
+    # out = Document.parse_obj(out)
+    # print("out.keys()", out.keys())
+    if out.get("type") == "Document":
+        out.pop("type")
+    page_content = out.pop("page_content", None)
+    if page_content is None:
+        page_content = out.get("question") + " " + out.get("answer")
+    metadata = out.pop("metadata", None)
+    if metadata is None:
+        metadata = {k: v for k, v in out.items()}
+    out = Document(page_content=page_content, metadata=metadata)
     return out
 
 
 def display_tool_output(expander, tool_output_py):
+    # print("tool_output,py", type(tool_output_py), tool_output_py)
+    if isinstance(tool_output_py, str) and tool_output_py[0] in ["[", "{"]:
+        tool_output_py = ast.literal_eval(tool_output_py)
+
     if isinstance(tool_output_py, list):
         for idx, out in enumerate(tool_output_py):
             if isinstance(out, dict):

@@ -3,6 +3,7 @@ import os
 import asyncio
 import json
 from typing import List, Dict
+import uuid
 
 import streamlit as st
 
@@ -11,43 +12,36 @@ import utils
 import ast
 from langserve import RemoteRunnable
 from logger import logger
+import requests
 
 warnings.filterwarnings("ignore")
 
 URL = os.environ.get("FAQ_BOT_SERVER_API", "http://localhost:8002")
 SECRET_KEY = os.environ.get("SECRET_KEY", "123")
+HEADERS = {"SECRETKEY": SECRET_KEY}
 runner = RemoteRunnable(url=URL)
 callback_handler = utils.StreamlitUICallbackHandler()
 
-INITIAL_MESSAGE = [
-    utils.Message(
-        content="Hey there, I'm OneSpark-Bot! What OneSpark related info can I give you today?",
-        type="ai",
-    )
-]
+INITIAL_MESSAGE = utils.Message(
+    content="Hey there, I'm OneSpark-Bot! What OneSpark related info can I give you today?",
+    type="ai",
+)
 
 logger.info("\n\n\n\n\n")
 
 
-def append_message(msg: utils.Message):
-    st.session_state.chat_history.append(msg)
-
-
 async def run_model(inp: dict, config: dict = {}):
-    import requests
-
     if "configurable" not in config:
         config = {"configurable": config}
     logger.info("input %s", inp)
     logger.info("config %s", config["configurable"])
 
     # async for event in runner.astream_events(input=inp, config=config, version="v1"):
-    headers = {"SECRETKEY": SECRET_KEY}
     response = requests.post(
         URL + "/chat/stream_events",
         json={"input": inp, "config": config},
         stream=True,
-        headers=headers,
+        headers=HEADERS,
     )
     logger.info("post response %s", response)
     if response.status_code != 200:
@@ -92,13 +86,26 @@ async def run_model(inp: dict, config: dict = {}):
                     )
 
 
+def update_chat_history():
+    response = requests.get(
+        URL + f"/chat/get_chat_history/{st.session_state.session_id}",
+        headers=HEADERS,
+    ).json()
+    # print("get response", response)
+    msgs = [] if response is None else response["messages"]
+    msgs = [utils.Message(**el) for el in msgs]
+    for msg in msgs:
+        if msg not in st.session_state.chat_history:
+            st.session_state.chat_history.append(msg)
+
+
 async def main():
     st.title("OneSpark FAQ Bot")
     # Add a reset button
     if st.button("Reset Chat", type="secondary"):
         for key in st.session_state.keys():
             del st.session_state[key]
-        st.session_state["chat_history"] = INITIAL_MESSAGE
+        st.session_state.chat_history = [INITIAL_MESSAGE]
 
     ### Sidebar ###
     st.sidebar.markdown(
@@ -147,7 +154,7 @@ async def main():
         "tell me a joke",
     ]:
         if st.sidebar.button(label=example):
-            append_message(utils.Message(content=example, type="human"))
+            st.session_state.latest_prompt = example
 
     ### Sidebar ###
 
@@ -158,8 +165,14 @@ async def main():
 
     ### Styles ###
 
+    ### Session state ###
+
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+        print("session_id", st.session_state.session_id)
+
     if "chat_history" not in st.session_state:
-        st.session_state["chat_history"]: List[utils.Message] = INITIAL_MESSAGE
+        st.session_state.chat_history: List[utils.Message] = [INITIAL_MESSAGE]
 
     if "model" not in st.session_state:
         st.session_state["model"] = model
@@ -167,14 +180,22 @@ async def main():
     if "temperature" not in st.session_state:
         st.session_state["temperature"] = temperature
 
+    if "latest_prompt" not in st.session_state:
+        st.session_state.latest_prompt: str = ""
+
     if "prompt_disabled" not in st.session_state:
         st.session_state.prompt_disabled = False
+
+    ### Session state ###
+
+    # Update chat history
+    update_chat_history()
 
     # Prompt for user input and save
     if prompt := st.chat_input(
         max_chars=250, disabled=st.session_state.prompt_disabled
     ):
-        append_message(utils.Message(content=prompt, type="human"))
+        st.session_state.latest_prompt = prompt
         st.session_state.prompt_disabled = True
 
     # Show conversation history
@@ -185,16 +206,26 @@ async def main():
     st.session_state.prompt_disabled = not callback_handler.has_streaming_ended
 
     # get latest query (see if it's from the user)
-    latest_msg: utils.Message = st.session_state.chat_history[-1]
-    if latest_msg.type == "human":
+    latest_msg = st.session_state.latest_prompt
+    if len(latest_msg.strip()) > 0:
+        # Display
+        utils.display_message(
+            utils.Message(
+                content=latest_msg,
+                type="human",
+            )
+        )
+
         config = {
             # "llm": "fake_llm",
             "llm_model_name": model,
             "llm_temperature": temperature,
         }
         # Ignore last one as it's the query
-        chat_history = [el.model_dump() for el in st.session_state["chat_history"][:-1]]
-        inp = {"query": latest_msg.content, "chat_history": chat_history}
+        inp = {
+            "query": latest_msg,
+            "session_id": st.session_state.session_id,
+        }
         results = []
         async for event in run_model(inp=inp, config=config):
             results.append(event)
@@ -215,43 +246,37 @@ async def main():
                 if isinstance(tool_input, dict) and len(tool_input) == 0:
                     tool_input = None
                 # Store message
-                message = f"Running tool `{tool_name}` with input: `{tool_input}`"
-                append_message(
-                    utils.Message(
-                        content=message,
-                        type="ai",
-                        tool=utils.Tool(name=tool_name, arguments=tool_input),
-                    )
+                # message = f"Running tool `{tool_name}` with input: `{tool_input}`"
+                msg = utils.Message(
+                    content="",
+                    type="ai",
+                    additional_kwargs={
+                        "tool_calls": [
+                            {"function": {"name": tool_name, "arguments": tool_input}}
+                        ]
+                    },
                 )
                 # Display message
-                utils.display_message(st.session_state.chat_history[-1])
+                utils.display_message(msg)
             elif kind == "on_tool_end":
                 logger.info("tool end \n```\n%s\n```\n", data)
                 tool_name = " ".join(data["name"].split("_")).capitalize()
                 tool_output = data["data"]["output"]
-                tool_output_py = (
-                    None if tool_output is None else ast.literal_eval(tool_output)
-                )
                 # Store message
-                message = (
-                    f"Tool `{tool_name}` finished with output: ```{tool_output_py}```"
-                )
-                append_message(
-                    utils.Message(
-                        content=message,
-                        type="ai",
-                        tool=utils.Tool(name=tool_name, output=tool_output_py),
-                    )
+                msg = utils.Message(
+                    content=tool_output,
+                    type="tool",
+                    additional_kwargs={"name": tool_name},
                 )
                 # Display
-                utils.display_message(st.session_state.chat_history[-1])
+                utils.display_message(msg)
             # else:
             #     pass
         # Append final message
         final_message = "".join(callback_handler.token_buffer)
-        append_message(utils.Message(content=final_message, type="ai"))
         # Reset handler
         callback_handler.on_llm_end(response=final_message, run_id=None)
+        st.session_state.latest_prompt = ""
 
     # Reset prompt availability
     st.session_state["prompt_disabled"] = False
