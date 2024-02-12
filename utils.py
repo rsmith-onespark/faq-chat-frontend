@@ -79,13 +79,14 @@ def display_message(message: Message):
     if message.type == "tool":
         tool_log = f"(tool={message.additional_kwargs['name']})"
     # logger.info(
-    #     '\t displaying message %s: "%s" %s',
+    #     '\t displaying message %s: "%s" %s %s',
     #     message.type,
     #     (
     #         str(message.content)[:500] + "..."
     #         if len(str(message.content)) > 500
     #         else str(message.content)
     #     ),
+    #     message.additional_kwargs,
     #     tool_log,
     # )
     if message.type == "tool":
@@ -93,7 +94,10 @@ def display_message(message: Message):
             f"Tool `{message.additional_kwargs['name']}` finished", expanded=False
         )
         display_tool_output(expander=expander, tool_output_py=message.content)
-    elif message.type == "ai" and "tool_calls" in message.additional_kwargs:
+    elif (
+        message.type in ["ai", "AIMessageChunk"]
+        and "tool_calls" in message.additional_kwargs
+    ):
         for tc in message.additional_kwargs["tool_calls"]:
             expander = st.expander(
                 f"Running tool `{tc['function']['name']}`", expanded=False

@@ -172,7 +172,7 @@ async def main():
         print("session_id", st.session_state.session_id)
 
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history: List[utils.Message] = [INITIAL_MESSAGE]
+        st.session_state.chat_history = [INITIAL_MESSAGE]
 
     if "model" not in st.session_state:
         st.session_state["model"] = model
